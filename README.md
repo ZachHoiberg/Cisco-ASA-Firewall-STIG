@@ -3,7 +3,7 @@
 1. Create an ansible vault at ./secrets/secrets.yaml
 
 2. This Vault should contain the following formatted as such:
-recipientAddress: email@domain.com
+```recipientAddress: email@domain.com
 emailDomain: emaildomain.com
 smtpServer: smtpServer
 logHost: logHost
@@ -33,7 +33,13 @@ outsideInACL: |-
 outsideCryptomapACL: |-
         access-list outside_cryptomap extended permit ip object X object Y
         access-list outside_cryptomap extended deny ip any any log default
-        
+ipsecProposal: |-
+        protocol esp encryption des
+        protocol esp integrity sha-512 sha-384 sha-256
+cryptoMapName: outside_cryptomap
+cryptoMapID: 1
+ipsecProposalID: 1
+```        
 3. Create inventory file
 
 4. Run playbook
