@@ -1,31 +1,164 @@
 ---
-- name: Cisco ASA Firewall STIG Config
+- name: SAT-ASA Firewall STIG Config
   hosts: all
-  gather_facts: False
+  vars_files: secrets/secrets.yml
+  gather_facts: True
   connection: network_cli
   become: yes
   tasks:
 
-#    - name: CASA-FW-000010 - The Cisco ASA must be configured to filter outbound traffic, allowing only authorized ports and services.
-#      cisco.asa.asa_config:
-#        lines:
-#        - 
+    - name: Create the lists for ACLs
+      set_fact: 
+        insideInList: "{{insideInACL.split('\n')}}"
+        insideOutList: "{{insideOutACL.split('\n')}}"
+        outsideInList: "{{outsideInACL.split('\n')}}"
+        outsideCryptomapACLList: "{{outsideCryptomapACL.split('\n')}}"
+        outsideCryptomapList: "{{outsideCryptomap.split('\n')}}"
+        ipsecProposalList: "{{ipsecProposal.split('\n')}}"
+        tunnelGroupList: "{{tunnelGroups.split('\n')}}"
+        vpnFilterList: "{{vpnFilterACL.split('\n')}}"
+
+    - name: Grabbing running config
+      ios_command:
+        commands: show running-config | include access-list inside_access_in extended
+      register: running_config
+
+    - name: CASA-FW-000010 - The Cisco ASA must be configured to filter outbound traffic, allowing only authorized ports and services. (1/2)
+      block:
+        - name: CASA-FW-000010 - The Cisco ASA must be configured to filter outbound traffic, allowing only authorized ports and services. (1/2) Clearing if incorrect 
+          cisco.asa.asa_config:
+            lines: "{{insideInList}}"
+            match: exact
+            replace: block
+            before: clear configure access-list inside_access_in
+            config: "{{running_config.stdout[0]}}"
+      rescue: 
+        - name: CASA-FW-000010 - The Cisco ASA must be configured to filter outbound traffic, allowing only authorized ports and services. (1/2) Creating if not found
+          cisco.asa.asa_config:
+            lines: "{{insideInList}}"
+            match: exact
+            replace: block
+
+    - name: CASA-FW-000010 - The Cisco ASA must be configured to filter outbound traffic, allowing only authorized ports and services. (2/2)
+      cisco.asa.asa_config:
+        lines:
+        - access-group inside_access_in in interface inside
+
+    - name: Grabbing interface facts
+      cisco.asa.asa_facts:
+        gather_network_resources: all
+
+    - name: Grabbing running config
+      cisco.asa.asa_command:
+        commands: show running-config all
+      register: running_config
 
     - name: CASA-FW-000020 - The Cisco ASA must immediately use updates made to policy enforcement mechanisms such as firewall rules, security policies, and security zones.
       cisco.asa.asa_config:
         lines:
         - no asp rule-engine transactional-commit access-group
-        defaults: yes
+        defaults: Yes
+      when: 'not running_config.stdout[0] is search("no asp rule-engine transactional-commit access-group")'
 
-#    - name: CASA-FW-000030 - The Cisco ASA must be configured to restrict VPN traffic according to organization-defined filtering rules.
-#      cisco.asa.asa_config:
-#        lines:
-#        - 
+    - name: Grabbing running config
+      ios_command:
+        commands: show running-config | include access-list {{vpnFilterACLName}} extended
+      register: running_config
 
-    - name: CASA-FW-000040  - The Cisco ASA must be configured to generate traffic log entries containing information to establish what type of events occurred.
+    - name: CASA-FW-000030 - The Cisco ASA must be configured to restrict VPN traffic according to organization-defined filtering rules. (1/3)
+      block:
+        - name: CASA-FW-000030 - The Cisco ASA must be configured to restrict VPN traffic according to organization-defined filtering rules. (1/3) Clearing if incorrect
+          cisco.asa.asa_config:
+            lines: "{{vpnFilterList}}"
+            match: exact
+            replace: block
+            before: clear configure access-list {{vpnFilterACLName}}
+            config: "{{running_config.stdout[0]}}"
+      rescue: 
+        - name: CASA-FW-000030 - The Cisco ASA must be configured to restrict VPN traffic according to organization-defined filtering rules. (1/3) Creating if not found
+          cisco.asa.asa_config:
+            lines: "{{vpnFilterList}}"
+            match: exact
+            replace: block
+
+    - name: CASA-FW-000030 - The Cisco ASA must be configured to restrict VPN traffic according to organization-defined filtering rules. (2/3)
       cisco.asa.asa_config:
         lines:
-        - logging enable
+          - vpn-tunnel-protocol ikev2
+          - vpn-filter value {{vpnFilterACLName}}
+        parents: group-policy {{groupPolicyName}} attributes
+
+    - name: CASA-FW-000030 - The Cisco ASA must be configured to restrict VPN traffic according to organization-defined filtering rules. (3/3)
+      cisco.asa.asa_config:
+        lines:
+          - default-group-policy {{groupPolicyName}}
+        parents: tunnel-group {{item}} general-attributes
+      loop: "{{tunnelGroupList}}"
+      when: 'tunnelGroupList[0] != tunnelGroupList[-1] and item != ""'
+      
+
+    - name: CASA-FW-000040  - The Cisco ASA must be configured to generate traffic log entries containing information to establish what type of events occurred. (1/3)
+      cisco.asa.asa_acls:
+        config:
+          acls: 
+          - name: "{{item.name}}"
+            acl_type: "{{item.acl_type}}"
+            aces:
+            - line: "{{item.aces[-1].line|int +1|int}}"
+              grant: deny
+              protocol: ip
+              source: 
+                any: True
+              destination:
+                any: True
+              log: default
+              protocol_options:
+                ip: True
+        state: merged
+      loop: "{{ansible_network_resources.acls.acls}}"
+      when: 'item.aces is defined and item.aces[-1].grant is defined and item.aces[-1].grant == "deny" and (item.aces[-1].protocol != "ip" or not item.aces[-1].source.any or not item.aces[-1].destination.any or (item.aces[-1].log is defined and item.aces[-1].log != "default"))'
+
+    - name: CASA-FW-000040  - The Cisco ASA must be configured to generate traffic log entries containing information to establish what type of events occurred. (2/3)
+      cisco.asa.asa_acls:
+        config:
+          acls: 
+          - name: "{{item.name}}"
+            acl_type: "{{item.acl_type}}"
+            aces:
+            - line: "{{item.aces[-1].line|int + 1|int}}"
+              grant: deny
+              protocol: ip
+              source: 
+                any: True
+              destination:
+                any: True
+              log: default
+              protocol_options:
+                ip: True
+        state: merged
+      loop: "{{ansible_network_resources.acls.acls}}"
+      when: 'item.aces is defined and item.aces[-1].grant is defined and item.aces[-1].grant == "permit"'
+
+    - name: CASA-FW-000040  - The Cisco ASA must be configured to generate traffic log entries containing information to establish what type of events occurred. (3/3)
+      cisco.asa.asa_acls:
+        config:
+          acls: 
+          - name: "{{item.name}}"
+            acl_type: "{{item.acl_type}}"
+            aces:
+            - line: 1
+              grant: deny
+              protocol: ip
+              source: 
+                any: True
+              destination:
+                any: True
+              log: default
+              protocol_options:
+                ip: True
+        state: merged
+      loop: "{{ansible_network_resources.acls.acls}}"
+      when: 'item.aces is not defined'
 
     - name: CASA-FW-000050  - The Cisco ASA must be configured to generate traffic log entries containing information to establish when (date and time) the events occurred.
       cisco.asa.asa_config:
@@ -41,23 +174,57 @@
     - name: CASA-FW-000100 - The Cisco ASA must be configured to use TCP when sending log records to the central audit server.
       cisco.asa.asa_config:
         lines:
-#          - logging host NDM_INTERFACE 10.1.22.2 6/1514
+          - logging host {{loggingInterface}} {{logHost}} 6/1514
           - logging permit-hostdown
 
-#    - name: CASA-FW-000130 - The Cisco ASA must be configured to disable or remove unnecessary network services and functions that are not used as #part of its role in the architecture.
-#      cisco.asa.asa_config:
-#        lines:
-#        - 
+    - name: Grabbing running config
+      ios_command:
+        commands: show running-config telnet | exclude timeout
+      register: running_config
+
+    - name: CASA-FW-000130 - The Cisco ASA must be configured to disable or remove unnecessary network services and functions that are not used as part of its role in the architecture. (1/2)
+      cisco.asa.asa_config:
+        lines:
+        - no {{item}}
+      when: running_config.stdout[0] is search ("telnet") and running_config.stdout_lines[0][0] != running_config.stdout_lines[0][-1]
+      loop: "{{running_config.stdout_lines[0] if running_config.stdout_lines[0] is iterable and running_config.stdout_lines[0] is not string}}"
+
+    - name: CASA-FW-000130 - The Cisco ASA must be configured to disable or remove unnecessary network services and functions that are not used as part of its role in the architecture. (2/2)
+      cisco.asa.asa_config:
+        lines:
+        - no {{running_config.stdout[0]}}
+      when: running_config.stdout[0] is search ("telnet") and running_config.stdout_lines[0][0] == running_config.stdout_lines[0][-1]
 
     - name: CASA-FW-000150 - The Cisco ASA must be configured to enable threat detection to mitigate risks of denial-of-service (DoS) attacks.
       cisco.asa.asa_config:
         lines:
         - threat-detection basic-threat
 
-#    - name: CASA-FW-000170 - The Cisco ASA perimeter firewall must be configured to filter traffic destined to the enclave in accordance with the specific traffic that is approved and registered in the Ports, Protocols, and Services Management (PPSM) Category Assurance List (CAL) and vulnerability assessments.
-#      cisco.asa.asa_config:
-#        lines:
-#          -
+    - name: Grabbing running config
+      ios_command:
+        commands: show running-config | include access-list outside_access_in extended
+      register: running_config
+
+    - name: CASA-FW-000230 - The Cisco ASA perimeter firewall must be configured to filter traffic destined to the enclave in accordance with the specific traffic that is approved and registered in the Ports, Protocols, and Services Management (PPSM) Category Assurance List (CAL) and vulnerability assessments (1/2)
+      block:
+        - name:  CASA-FW-000230 - The Cisco ASA perimeter firewall must be configured to filter traffic destined to the enclave in accordance with the specific traffic that is approved and registered in the Ports, Protocols, and Services Management (PPSM) Category Assurance List (CAL) and vulnerability assessments (1/2) Clearing if incorrect
+          cisco.asa.asa_config:
+            lines: "{{outsideInList}}"
+            match: exact
+            replace: block
+            before: clear configure access-list outside_access_in
+            config: "{{running_config.stdout[0]}}"
+      rescue: 
+        - name:  CASA-FW-000230 - The Cisco ASA perimeter firewall must be configured to filter traffic destined to the enclave in accordance with the specific traffic that is approved and registered in the Ports, Protocols, and Services Management (PPSM) Category Assurance List (CAL) and vulnerability assessments (1/2) Creating if not found
+          cisco.asa.asa_config:
+            lines: "{{outsideInList}}"
+            match: exact
+            replace: block
+
+    - name: CASA-FW-000230 - CASA-FW-000170 - The Cisco ASA perimeter firewall must be configured to filter traffic destined to the enclave in accordance with the specific traffic that is approved and registered in the Ports, Protocols, and Services Management (PPSM) Category Assurance List (CAL) and vulnerability assessments (2/2)
+      cisco.asa.asa_config:
+        lines:
+          - access-group outside_access_in in interface outside
 
     - name: CASA-FW-000200 - The Cisco ASA must be configured to send log data of denied traffic to a central audit server for analysis.
       cisco.asa.asa_config:
@@ -67,9 +234,8 @@
     - name: CASA-FW-000210 - The Cisco ASA must be configured to generate a real-time alert to organization-defined personnel and/or the firewall administrator in the event communication with the central audit server is lost.
       cisco.asa.asa_config:
         lines: 
-          - logging permit-hostdown
-          - logging mail 3 
-          - logging recipient-address {{recipientAddress}}
+          - logging mail warnings
+          - logging recipient-address {{recipientAddress}} level warnings
           - logging from-address {{ansible_net_hostname}}@{{emailDomain}}
           - smtp-server {{smtpServer}}
 
@@ -78,29 +244,122 @@
         lines:
           - threat-detection scanning-threat shun
    
-#    - name: CASA-FW-000230 - The Cisco ASA must be configured to filter inbound traffic on all external interfaces.
-#      cisco.asa.asa_config:
-#        lines:
-#          -
+    - name: Grabbing running config
+      ios_command:
+        commands: show running-config | include access-list outside_access_in extended
+      register: running_config
 
-#    - name: CASA-FW-000240 - The Cisco ASA must be configured to filter outbound traffic on all internal interfaces.
-#      cisco.asa.asa_config:
-#        lines:
-#          -
+    - name: CASA-FW-000230 - The Cisco ASA must be configured to filter inbound traffic on all external interfaces. (1/2)
+      cisco.asa.asa_config:
+        lines: "{{outsideInList}}"
+        match: exact
+        replace: block
+        before: clear configure access-list outside_access_in
+        config: "{{running_config.stdout[0]}}"
 
-#    - name: CASA-FW-000250 - The Cisco ASA perimeter firewall must be configured to block all outbound management traffic.
-#      cisco.asa.asa_config:
-#        lines:
-#          -
+    - name: CASA-FW-000230 - The Cisco ASA must be configured to filter inbound traffic on all external interfaces. (2/2)
+      cisco.asa.asa_config:
+        lines:
+          - access-group outside_access_in in interface outside
 
-#    - name: CASA-FW-000260 - The Cisco ASA must be configured to forward management traffic to the Network Operations Center (NOC) via an IPsec tunnel.
-#      cisco.asa.asa_config:
-#        lines:
-#          -
+    - name: Grabbing running config
+      ios_command:
+        commands: show running-config | include access-list inside_access_in extended
+      register: running_config
+
+    - name: CASA-FW-000240 - The Cisco ASA must be configured to filter outbound traffic on all internal interfaces. (1/2)
+      cisco.asa.asa_config:
+        lines: "{{insideInList}}"
+        match: exact
+        replace: block
+        before: clear configure access-list inside_access_in
+        config: "{{running_config.stdout[0]}}"
+
+    - name: CASA-FW-000240 - The Cisco ASA must be configured to filter outbound traffic on all internal interfaces. (1/2)
+      cisco.asa.asa_config:
+        lines:
+          - access-group inside_access_in in interface inside
+        
+    - name: Grabbing running config
+      ios_command:
+        commands: show running-config | include access-list inside_access_out extended
+      register: running_config
+
+    - name: CASA-FW-000250 - The Cisco ASA perimeter firewall must be configured to block all outbound management traffic. (1/2)
+      block:
+        - name:  CASA-FW-000250 - The Cisco ASA perimeter firewall must be configured to block all outbound management traffic. (1/2) Clearing if incorrect
+          cisco.asa.asa_config:
+            lines: "{{insideOutList}}"
+            match: exact
+            replace: block
+            before: clear configure access-list inside_access_out
+            config: "{{running_config.stdout[0]}}"
+      rescue: 
+        - name:  CASA-FW-000250 - The Cisco ASA perimeter firewall must be configured to block all outbound management traffic. (1/2) Creating if not found
+          cisco.asa.asa_config:
+            lines: "{{insideOutList}}"
+            match: exact
+            replace: block
+
+    - name: CASA-FW-000250 - The Cisco ASA perimeter firewall must be configured to block all outbound management traffic. (2/2)
+      cisco.asa.asa_config:
+        lines:
+          - access-group inside_access_out out interface inside
+
+    - name: CASA-FW-000260 - The Cisco ASA must be configured to forward management traffic to the Network Operations Center (NOC) via an IPsec tunnel. (1/4)
+      cisco.asa.asa_config:
+        lines: "{{ipsecProposalList}}"
+        parents: "crypto ipsec ikev2 ipsec-proposal {{ipsecProposalID}}"
+
+    - name: Grabbing running config
+      ios_command:
+        commands: show running-config | include access-list {{cryptoMapName}}
+      register: running_config
+
+    - name: CASA-FW-000260 - The Cisco ASA must be configured to forward management traffic to the Network Operations Center (NOC) via an IPsec tunnel. (2/4)
+      block:
+        - name: CASA-FW-000260 - The Cisco ASA must be configured to forward management traffic to the Network Operations Center (NOC) via an IPsec tunnel. (2/4) Clearing if incorrect
+          cisco.asa.asa_config:
+            lines: "{{outsideCryptomapACLList}}"
+            replace: block
+            match: exact
+            before: clear configure access-list {{cryptoMapName}}
+            config: "{{running_config.stdout[0]}}"
+      rescue:
+        - name: CASA-FW-000260 - The Cisco ASA must be configured to forward management traffic to the Network Operations Center (NOC) via an IPsec tunnel. (2/4) Creating if not found
+          cisco.asa.asa_config:
+            lines: "{{outsideCryptomapACLList}}"
+            replace: block
+            match: exact
+            config: "{{running_config.stdout[0]}}"
+
+    - name: Grabbing running config
+      ios_command:
+        commands: show running-config | include crypto map {{cryptoMapName}} {{cryptoMapID}}
+      register: running_config
+
+    - name: CASA-FW-000260 - The Cisco ASA must be configured to forward management traffic to the Network Operations Center (NOC) via an IPsec tunnel. (3/4)
+      block:
+        - name: CASA-FW-000260 - The Cisco ASA must be configured to forward management traffic to the Network Operations Center (NOC) via an IPsec tunnel. (3/4) Clearing if incorrect
+          cisco.asa.asa_config:
+            lines: "{{outsideCryptomapList}}"
+            before: clear configure crypto {{cryptoMapName}} {{cryptoMapID}}
+            config: "{{running_config.stdout[0]}}"
+      rescue:
+        - name: CASA-FW-000260 - The Cisco ASA must be configured to forward management traffic to the Network Operations Center (NOC) via an IPsec tunnel. (3/4) Creating if not found
+          cisco.asa.asa_config:
+            lines: "{{outsideCryptomapList}}"
+            config: "{{running_config.stdout[0]}}"
+
+    - name: CASA-FW-000260 - The Cisco ASA must be configured to forward management traffic to the Network Operations Center (NOC) via an IPsec tunnel. (4/4)
+      cisco.asa.asa_config:
+            lines: "{{outsideCryptomapList}}"
+            config: "{{running_config.stdout[0]}}"
+          
 
     - name: CASA-FW-000270 - The Cisco ASA must be configured to inspect all inbound and outbound traffic at the application layer.
       cisco.asa.asa_config:
-        lines:
+        lines: 
           - service-policy global_policy global 
 
     - name: CASA-FW-000280 - The Cisco ASA must be configured to inspect all inbound and outbound IPv6 traffic for unknown or out-of-order extension headers.
@@ -111,11 +370,15 @@
           - policy-map global_policy
           - class inspection_default
 
-#    - name: CASA-FW-000290 - The Cisco ASA must be configured to restrict it from accepting outbound packets that contain an illegitimate address in the source address field via an egress filter or by enabling Unicast Reverse Path Forwarding (uRPF).
-#      cisco.asa.asa_config:
-#        lines:
-#          -
+    - name: CASA-FW-000290 - The Cisco ASA must be configured to restrict it from accepting outbound packets that contain an illegitimate address in the source address field via an egress filter or by enabling Unicast Reverse Path Forwarding (uRPF).
+      cisco.asa.asa_config:
+        lines:
+          - ip verify reverse-path interface inside
+
     - name: CASA-FW-000300 - The Cisco ASA must be configured to generate an alert that can be forwarded to organization-defined personnel and/or the firewall administrator when denial-of-service (DoS) incidents are detected.
       cisco.asa.asa_config:
         lines:
           - logging mail warnings
+          - logging recipient-address {{recipientAddress}} level warnings
+          - logging from-address {{ansible_net_hostname}}@{{emailDomain}}
+          - smtp-server {{smtpServer}}
