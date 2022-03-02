@@ -1,5 +1,5 @@
 ---
-- name: SAT-ASA Firewall STIG Config
+- name: Cisco-ASA Firewall STIG Config
   hosts: all
   vars_files: secrets/secrets.yml
   gather_facts: True
