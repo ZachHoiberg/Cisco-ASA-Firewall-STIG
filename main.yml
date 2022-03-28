@@ -19,7 +19,7 @@
         vpnFilterList: "{{vpnFilterACL.split('\n')}}"
 
     - name: Grabbing running config
-      ios_command:
+      cisco.asa.asa_command:
         commands: show running-config | include access-list inside_access_in extended
       register: running_config
 
@@ -61,7 +61,7 @@
       when: 'not running_config.stdout[0] is search("no asp rule-engine transactional-commit access-group")'
 
     - name: Grabbing running config
-      ios_command:
+      cisco.asa.asa_command:
         commands: show running-config | include access-list {{vpnFilterACLName}} extended
       register: running_config
 
@@ -81,7 +81,7 @@
             replace: block
 
     - name: Grabbing running config
-      ios_command:
+      cisco.asa.asa_command:
         commands: show running-config 
       register: running_config
 
@@ -208,7 +208,7 @@
           - logging permit-hostdown
 
     - name: Grabbing running config
-      ios_command:
+      cisco.asa.asa_command:
         commands: show running-config telnet | exclude timeout
       register: running_config
 
@@ -231,7 +231,7 @@
         - threat-detection basic-threat
 
     - name: Grabbing running config
-      ios_command:
+      cisco.asa.asa_command:
         commands: show running-config | include access-list outside_access_in extended
       register: running_config
 
@@ -275,7 +275,7 @@
           - threat-detection scanning-threat shun
    
     - name: Grabbing running config
-      ios_command:
+      cisco.asa.asa_command:
         commands: show running-config | include access-list outside_access_in extended
       register: running_config
 
@@ -293,7 +293,7 @@
           - access-group outside_access_in in interface outside
 
     - name: Grabbing running config
-      ios_command:
+      cisco.asa.asa_command:
         commands: show running-config | include access-list inside_access_in extended
       register: running_config
 
@@ -311,7 +311,7 @@
           - access-group inside_access_in in interface inside
         
     - name: Grabbing running config
-      ios_command:
+      cisco.asa.asa_command:
         commands: show running-config | include access-list secure_access_out extended
       register: running_config
 
@@ -342,7 +342,7 @@
         parents: "crypto ipsec ikev2 ipsec-proposal {{ipsecProposalID}}"
 
     - name: Grabbing running config
-      ios_command:
+      cisco.asa.asa_command:
         commands: show running-config | include access-list {{cryptoMapACLName}}
       register: running_config
 
@@ -364,7 +364,7 @@
             config: "{{running_config.stdout[0]}}"
 
     - name: Grabbing running config
-      ios_command:
+      cisco.asa.asa_command:
         commands: show running-config | include crypto map {{cryptoMapName}} .*
       register: running_config
 
@@ -381,7 +381,7 @@
             config: "{{running_config.stdout[0]}}"
 
     - name: Checking for tunnel
-      ios_command:
+      cisco.asa.asa_command:
         commands: show vpn-session
       register: vpn_sessions
 
@@ -405,7 +405,7 @@
           - class inspection_default
 
     - name: Grabbing running config
-      ios_command:
+      cisco.asa.asa_command:
         commands: show running-config | include access-list inside_access_in extended
       register: running_config
 
