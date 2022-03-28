@@ -65,14 +65,13 @@
         commands: show running-config | include access-list {{vpnFilterACLName}} extended
       register: running_config
 
-    - name: CASA-FW-000030 - The Cisco ASA must be configured to restrict VPN traffic according to organization-defined filtering rules. (1/5)
+    - name: CASA-FW-000030 - The Cisco ASA must be configured to restrict VPN traffic according to organization-defined filtering rules. (1/7)
       block:
-        - name: CASA-FW-000030 - The Cisco ASA must be configured to restrict VPN traffic according to organization-defined filtering rules. (1/5) Clearing if incorrect
+        - name: CASA-FW-000030 - The Cisco ASA must be configured to restrict VPN traffic according to organization-defined filtering rules. (1/7)
           cisco.asa.asa_config:
             lines: "{{vpnFilterList}}"
             match: exact
             replace: block
-            before: clear configure access-list {{vpnFilterACLName}}
             config: "{{running_config.stdout[0]}}"
       rescue: 
         - name: CASA-FW-000030 - The Cisco ASA must be configured to restrict VPN traffic according to organization-defined filtering rules. (1/7) Creating if not found
@@ -199,7 +198,7 @@
     - name: CASA-FW-000090 - The Cisco ASA must be configured to queue log records locally in the event that the central audit server is down or not reachable.
       cisco.asa.asa_config:
         lines:
-        - logging buffered informational
+        - logging buffered notifications
         - logging queue 8192
 
     - name: CASA-FW-000100 - The Cisco ASA must be configured to use TCP when sending log records to the central audit server.
@@ -371,10 +370,9 @@
 
     - name: CASA-FW-000260 - The Cisco ASA must be configured to forward management traffic to the Network Operations Center (NOC) via an IPsec tunnel. (3/4)
       block:
-        - name: CASA-FW-000260 - The Cisco ASA must be configured to forward management traffic to the Network Operations Center (NOC) via an IPsec tunnel. (3/4) Clearing if incorrect
+        - name: CASA-FW-000260 - The Cisco ASA must be configured to forward management traffic to the Network Operations Center (NOC) via an IPsec tunnel. (3/4)
           cisco.asa.asa_config:
             lines: "{{outsideCryptomapList}}"
-            before: clear configure crypto map {{cryptoMapName}}
             config: "{{running_config.stdout[0]}}"
       rescue:
         - name: CASA-FW-000260 - The Cisco ASA must be configured to forward management traffic to the Network Operations Center (NOC) via an IPsec tunnel. (3/4) Creating if not found
@@ -382,16 +380,16 @@
             lines: "{{outsideCryptomapList}}"
             config: "{{running_config.stdout[0]}}"
 
-    - name: Grabbing running config
+    - name: Checking for tunnel
       ios_command:
-        commands: show running-config | include crypto map {{cryptoMapName}} {{cryptoMapID}} set ikev2 pre-shared-key
-      register: running_config
+        commands: show vpn-session
+      register: vpn_sessions
 
     - name: CASA-FW-000260 - The Cisco ASA must be configured to forward management traffic to the Network Operations Center (NOC) via an IPsec tunnel. (4/4) Creating if not found
       cisco.asa.asa_config:
         lines: 
           - "{{outsideCryptomapKey}}"
-      when: not running_config.stdout[0] is search("pre-shared-key")
+      when: not vpn_sessions.stdout[0] is search("Site-to-Site VPN")
           
     - name: CASA-FW-000270 - The Cisco ASA must be configured to inspect all inbound and outbound traffic at the application layer.
       cisco.asa.asa_config:
@@ -406,12 +404,23 @@
           - policy-map global_policy
           - class inspection_default
 
-    - name: CASA-FW-000290 - The Cisco ASA must be configured to restrict it from accepting outbound packets that contain an illegitimate address in the source address field via an egress filter or by enabling Unicast Reverse Path Forwarding (uRPF).
+    - name: Grabbing running config
+      ios_command:
+        commands: show running-config | include access-list inside_access_in extended
+      register: running_config
+
+    - name: CASA-FW-000290 - The Cisco ASA must be configured to restrict it from accepting outbound packets that contain an illegitimate address in the source address field via an egress filter or by enabling Unicast Reverse Path Forwarding (uRPF). (1/2)
+      cisco.asa.asa_config:
+          lines: "{{insideInList}}"
+          match: exact
+          replace: block
+          before: clear configure access-list inside_access_in
+          config: "{{running_config.stdout[0]}}"
+
+    - name: CASA-FW-000290 - The Cisco ASA must be configured to restrict it from accepting outbound packets that contain an illegitimate address in the source address field via an egress filter or by enabling Unicast Reverse Path Forwarding (uRPF). (2/2)
       cisco.asa.asa_config:
         lines:
-          - ip verify reverse-path interface inside
-          - ip verify reverse-path interface insideVoice
-          - ip verify reverse-path interface secure
+        - access-group inside_access_in in interface inside
 
     - name: CASA-FW-000300 - The Cisco ASA must be configured to generate an alert that can be forwarded to organization-defined personnel and/or the firewall administrator when denial-of-service (DoS) incidents are detected.
       cisco.asa.asa_config:
